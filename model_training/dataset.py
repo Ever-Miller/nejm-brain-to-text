@@ -269,7 +269,7 @@ def train_test_split_indicies(file_paths, test_percentage = 0.1, seed = -1, bad_
     # Get trials in each day
     trials_per_day = {}
     for i, path in enumerate(file_paths):
-        session = [s for s in path.split('/') if (s.startswith('t15.20') or s.startswith('t12.20'))][0]
+        session = [s for s in path.replace('\\', '/').split('/') if (s.startswith('t15.20') or s.startswith('t12.20'))][0]
 
         good_trial_indices = []
 

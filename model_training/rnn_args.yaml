@@ -1,9 +1,9 @@
 model:
   n_input_features: 512 # number of input features in the neural data. (2 features per electrode, 256 electrodes)
-  n_units: 768 # number of units per GRU layer
+  n_units: 64 # number of units per GRU layer
   rnn_dropout: 0.4 # dropout rate for the GRU layers
   rnn_trainable: true # whether the GRU layers are trainable
-  n_layers: 5 # number of GRU layers
+  n_layers: 1 # number of GRU layers
   patch_size: 14 # size of the input patches (14 time steps)
   patch_stride: 4 # stride for the input patches (4 time steps)
 
@@ -18,8 +18,8 @@ gpu_number: '1' # GPU number to use for training, formatted as a string (e.g., '
 mode: train
 use_amp: true # whether to use automatic mixed precision (AMP) for training
 
-output_dir: trained_models/baseline_rnn # directory to save the trained model and logs
-checkpoint_dir: trained_models/baseline_rnn/checkpoint # directory to save checkpoints during training
+output_dir: trained_models/test # directory to save the trained model and logs
+checkpoint_dir: trained_models/test/checkpoint # directory to save checkpoints during training
 init_from_checkpoint: false # whether to initialize the model from a checkpoint
 init_checkpoint_path: None # path to the checkpoint to initialize the model from, if any
 save_best_checkpoint: true # whether to save the best checkpoint based on validation metrics
@@ -70,7 +70,7 @@ dataset:
     smooth_kernel_std: 2 # standard deviation of the smoothing kernel applied to the data
 
   neural_dim: 512 # dimensionality of the neural data
-  batch_size: 64 # batch size for training
+  batch_size: 16 # batch size for training
   n_classes: 41 # number of classes (phonemes) in the dataset
   max_seq_elements: 500 # maximum number of sequence elements (phonemes) for any trial
   days_per_batch: 4 # number of randomly-selected days to include in each batch
@@ -81,7 +81,7 @@ dataset:
   test_percentage: 0.1 # percentage of data to use for testing
   feature_subset: null # specific features to include in the dataset
 
-  dataset_dir: ../data/hdf5_data_final # directory containing the dataset
+  dataset_dir: C:\Users\3verj\Desktop\Odi\Git-Repos\nejm-brain-to-text-2\data\hdf5_data_final # directory containing the dataset
   bad_trials_dict: null # dictionary of bad trials to exclude from the dataset
   sessions: # list of sessions to include in the dataset
   - t15.2023.08.11

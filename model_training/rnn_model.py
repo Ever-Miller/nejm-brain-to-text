@@ -95,12 +95,19 @@ class GRUDecoder(nn.Module):
         day_weights = torch.stack([self.day_weights[i] for i in day_idx], dim=0)
         day_biases = torch.cat([self.day_biases[i] for i in day_idx], dim=0).unsqueeze(1)
 
+
+        # einstein summation
+        # [500, Feats] x [Feats, 512]
         x = torch.einsum("btd,bdk->btk", x, day_weights) + day_biases
         x = self.day_layer_activation(x)
 
         # Apply dropout to the ouput of the day specific layer
         if self.input_dropout > 0:
             x = self.day_layer_dropout(x)
+
+        print(f"X shape: {x.shape}")
+        print(f"Day w: {day_weights.shape}")
+        print(f"Day b: {day_biases.shape}")
 
         # (Optionally) Perform input concat operation
         if self.patch_size > 0: 
