@@ -90,7 +90,6 @@ class GRUDecoder(nn.Module):
         x        (tensor)  - batch of examples (trials) of shape: (batch_size, time_series_length, neural_dim)
         day_idx  (tensor)  - tensor which is a list of day indexs corresponding to the day of each example in the batch x. 
         '''
-
         # Apply day-specific layer to (hopefully) project neural data from the different days to the same latent space
         day_weights = torch.stack([self.day_weights[i] for i in day_idx], dim=0)
         day_biases = torch.cat([self.day_biases[i] for i in day_idx], dim=0).unsqueeze(1)
@@ -104,10 +103,6 @@ class GRUDecoder(nn.Module):
         # Apply dropout to the ouput of the day specific layer
         if self.input_dropout > 0:
             x = self.day_layer_dropout(x)
-
-        print(f"X shape: {x.shape}")
-        print(f"Day w: {day_weights.shape}")
-        print(f"Day b: {day_biases.shape}")
 
         # (Optionally) Perform input concat operation
         if self.patch_size > 0: 
