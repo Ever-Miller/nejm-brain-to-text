@@ -23,6 +23,8 @@ torch.backends.cudnn.deterministic = True # makes training more reproducible
 torch._dynamo.config.cache_size_limit = 64
 
 from rnn_model import GRUDecoder
+from my_train import CnnDecoder, CnnTransformerDecoder, CnnGruDecoder
+from evaluate_model_helpers import LOGIT_TO_PHONEME
 
 class BrainToTextDecoder_Trainer:
     """
@@ -117,20 +119,33 @@ class BrainToTextDecoder_Trainer:
             torch.manual_seed(self.args['seed'])
 
         # Initialize the model 
-        self.model = GRUDecoder(
+        # self.model = GRUDecoder(
+        #     neural_dim = self.args['model']['n_input_features'],
+        #     n_units = self.args['model']['n_units'],
+        #     n_days = len(self.args['dataset']['sessions']),
+        #     n_classes  = self.args['dataset']['n_classes'],
+        #     rnn_dropout = self.args['model']['rnn_dropout'], 
+        #     input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
+        #     n_layers = self.args['model']['n_layers'],
+        #     patch_size = self.args['model']['patch_size'],
+        #     patch_stride = self.args['model']['patch_stride'],
+        # )
+
+        self.model = CnnTransformerDecoder(
             neural_dim = self.args['model']['n_input_features'],
             n_units = self.args['model']['n_units'],
             n_days = len(self.args['dataset']['sessions']),
             n_classes  = self.args['dataset']['n_classes'],
-            rnn_dropout = self.args['model']['rnn_dropout'], 
+            transformer_dropout = self.args['model']['rnn_dropout'],
             input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
             n_layers = self.args['model']['n_layers'],
             patch_size = self.args['model']['patch_size'],
             patch_stride = self.args['model']['patch_stride'],
         )
 
+
         # Call torch.compile to speed up training
-        # self.logger.info("Using torch.compile")
+        # Sself.logger.info("Using torch.compile")
         # self.model = torch.compile(self.model)
 
         self.logger.info(f"Initialized RNN decoding model")
@@ -503,15 +518,19 @@ class BrainToTextDecoder_Trainer:
         save_best_checkpoint = self.args.get('save_best_checkpoint', True)
         early_stopping = self.args.get('early_stopping', True)
 
+        accumulation_steps = self.args.get('accumulation_steps', 1)
+
         early_stopping_val_steps = self.args['early_stopping_val_steps']
 
         train_start_time = time.time()
+
+        grad_norm = 0.0
+        self.optimizer.zero_grad()
 
         # train for specified number of batches
         for i, batch in enumerate(self.train_loader):
             
             self.model.train()
-            self.optimizer.zero_grad()
             
             # Train step
             start_time = time.time() 
@@ -531,8 +550,13 @@ class BrainToTextDecoder_Trainer:
 
                 adjusted_lens = ((n_time_steps - self.args['model']['patch_size']) / self.args['model']['patch_stride'] + 1).to(torch.int32)
 
-                # Get phoneme predictions 
-                logits = self.model(features, day_indicies)
+                if isinstance(self.model, CnnTransformerDecoder):
+                    max_seq_len = int((features.shape[1] - self.args['model']['patch_size']) / self.args['model']['patch_stride']) + 1
+                    mask = torch.arange(max_seq_len, device=self.device).expand(features.shape[0], max_seq_len) >= adjusted_lens.unsqueeze(1)
+                    logits = self.model(features, day_indicies, src_key_padding_mask=mask)
+                else:
+                    # Get phoneme predictions 
+                    logits = self.model(features, day_indicies)
 
                 # Calculate CTC Loss
                 loss = self.ctc_loss(
@@ -543,28 +567,31 @@ class BrainToTextDecoder_Trainer:
                     )
                     
                 loss = torch.mean(loss) # take mean loss over batches
-            
+
+            loss = loss / accumulation_steps
             loss.backward()
 
-            # Clip gradient
-            if self.args['grad_norm_clip_value'] > 0: 
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
-                                               max_norm = self.args['grad_norm_clip_value'],
-                                               error_if_nonfinite = True,
-                                               foreach = True
-                                               )
+            if ((i + 1) % accumulation_steps == 0) or (i + 1 == len(self.train_loader)):
+                # Clip gradient
+                if self.args['grad_norm_clip_value'] > 0: 
+                    grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
+                                                    max_norm = self.args['grad_norm_clip_value'],
+                                                    error_if_nonfinite = True,
+                                                    foreach = True
+                                                    )
 
-            self.optimizer.step()
-            self.learning_rate_scheduler.step()
+                self.optimizer.step()
+                self.learning_rate_scheduler.step()
+                self.optimizer.zero_grad()
             
             # Save training metrics 
             train_step_duration = time.time() - start_time
-            train_losses.append(loss.detach().item())
+            train_losses.append(loss.detach().item() * accumulation_steps)
 
             # Incrementally log training progress
             if i % self.args['batches_per_train_log'] == 0:
                 self.logger.info(f'Train batch {i}: ' +
-                        f'loss: {(loss.detach().item()):.2f} ' +
+                        f'loss: {(loss.detach().item() * accumulation_steps):.2f} ' +
                         f'grad norm: {grad_norm:.2f} '
                         f'time: {train_step_duration:.3f}')
 
@@ -730,6 +757,20 @@ class BrainToTextDecoder_Trainer:
                     trueSeq = np.array(
                         labels[iterIdx][0 : phone_seq_lens[iterIdx]].cpu().detach()
                     )
+
+                    if i == 0 and iterIdx < 3:
+                        print(f"\nDEBUG PREDICTIONS (Item {iterIdx}):")
+                    
+                        try:
+                            true_str = " ".join([LOGIT_TO_PHONEME[int(p)] for p in trueSeq])
+                            pred_str = " ".join([LOGIT_TO_PHONEME[int(p)] for p in decoded_seq])
+                        except IndexError:
+                            true_str = f"Error converting: {trueSeq}"
+                            pred_str = f"Error converting: {decoded_seq}"
+
+                        print(f"True: {true_str}")
+                        print(f"Pred: {pred_str}")
+                        print("-" * 30)
             
                     batch_edit_distance += F.edit_distance(decoded_seq, trueSeq)
 

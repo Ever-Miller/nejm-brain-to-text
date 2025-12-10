@@ -18,8 +18,8 @@ gpu_number: '1' # GPU number to use for training, formatted as a string (e.g., '
 mode: train
 use_amp: true # whether to use automatic mixed precision (AMP) for training
 
-output_dir: trained_models/test_4 # directory to save the trained model and logs
-checkpoint_dir: trained_models/test_4/checkpoint # directory to save checkpoints during training
+output_dir: trained_models/test_5 # directory to save the trained model and logs
+checkpoint_dir: trained_models/test_5/checkpoint # directory to save checkpoints during training
 init_from_checkpoint: false # whether to initialize the model from a checkpoint
 init_checkpoint_path: None # path to the checkpoint to initialize the model from, if any
 save_best_checkpoint: true # whether to save the best checkpoint based on validation metrics

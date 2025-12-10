@@ -32,11 +32,14 @@ class PositionalEncoder(nn.Module):
         super().__init__()
         self.dropout = nn.Dropout(dropout)
 
-        pos = torch.arange(max_len).unsqueeze(1)
+        position = torch.arange(max_len).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
         pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(pos * div_term)
-        pe[:, 0, 1::2] = torch.cos(pos * div_term)
+
+        # Apply sin to even indices (2i)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        # Apply cos to odd indices (2i+1)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
@@ -270,11 +273,11 @@ class CnnTransformerDecoder(nn.Module):
                  n_days,
                  n_classes,
                  n_heads = 8,
-                 dim_feedforward = 2048,
+                 dim_feedforward = 1024,
                  cnn_layers = 2,
                  transformer_dropout = 0.1,
-                 conv_hidden_dim = 512,
-                 input_dropout = 0.0,
+                 conv_hidden_dim = 64,
+                 input_dropout = 0.1,
                  n_layers = 4, 
                  patch_size = 10,
                  patch_stride = 4):
@@ -309,7 +312,7 @@ class CnnTransformerDecoder(nn.Module):
             nn.Conv2d(8 * patch_size, conv_hidden_dim, 3, 1, 1),
             nn.LeakyReLU(0.1),
 
-            *[ResCnnBlock(conv_hidden_dim, transformer_dropout) for _ in range(n_layers)],
+            *[ResCnnBlock(conv_hidden_dim, transformer_dropout) for _ in range(cnn_layers)],
             nn.Flatten()
         )
 
