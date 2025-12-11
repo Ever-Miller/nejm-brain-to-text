@@ -1,3 +1,9 @@
+"""
+my_train.py
+author: Ever Miler
+Holds all decoder models for neural sequences to phoneme probabilities.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,9 +14,16 @@ from rnn_model import GRUDecoder
 
 torch.manual_seed(42)
 
-
+# =========================================================================================================
+# Helper Modules (Residual Blocks and Positional Encoding)
+# =========================================================================================================
 
 class ResCnnBlock(nn.Module):
+    """
+    Residual Cnn Block
+    Processes the input through two convolutional layers and adds the original
+    input back to the result. Helping to prevent vanishing gradients in deep networks
+    """
     def __init__(self, hidden_dim, dropout):
         super().__init__()
         self.block = nn.Sequential(
@@ -28,28 +41,52 @@ class ResCnnBlock(nn.Module):
     
 
 class PositionalEncoder(nn.Module):
+    """
+    Injects information about the position of the tokens in the sequence. The positional encodings have the same dimension as 
+    the embeddings, so the two can be summed.
+    """
     def __init__(self, d_model, dropout=0.1, max_len=5000):
         super().__init__()
         self.dropout = nn.Dropout(dropout)
 
+        # Create a matrix of shape [max_len, 1] representing position indices (0, 1, 2...)
         position = torch.arange(max_len).unsqueeze(1)
+
+        # Calculate frequencies for the sine and cosine functions
+        # This uses a geometric progression of wavelengths from 2pi to 10000*2pi
         div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+
+        # Create the positional encoding matrix
         pe = torch.zeros(max_len, 1, d_model)
 
-        # Apply sin to even indices (2i)
+        # Apply Sine to even indices and Cosine to odd indices
         pe[:, 0, 0::2] = torch.sin(position * div_term)
-        # Apply cos to odd indices (2i+1)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
+
+        # Save with model
         self.register_buffer('pe', pe)
 
     def forward(self, x):
         # x: [Seq_Len, Batch, Dim]
+        # Add the positional encoding to the input embedding
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
 
-    
+
+# =========================================================================================================
+# Decoder Architectures
+# =========================================================================================================
 
 class CnnDecoder(nn.Module):
+    """
+    A pure CNN-based decoder.
+    
+    It processes neural data by:
+    1. Aligning data from different days using day-specific linear layers.
+    2. Reshaping linear input into a spatial grid (8x8 electrode array).
+    3. Creating temporal patches (sliding windows).
+    4. Passing patches through a 2D CNN tower.
+    """
     def __init__(self,
                  neural_dim,
                  n_units,
@@ -143,6 +180,12 @@ class CnnDecoder(nn.Module):
 
 
 class CnnGruDecoder(nn.Module):
+    """
+    Hybrid CNN-RNN Decoder.
+    
+    1. Uses CNN (ResNet) to extract spatial features from neural patches.
+    2. Uses a GRU (Gated Recurrent Unit) to model temporal dependencies between patches.
+    """
     def __init__(self,
                  neural_dim,
                  n_units,
@@ -170,24 +213,24 @@ class CnnGruDecoder(nn.Module):
         self.patch_stride = patch_stride
 
 
-        # Parameters for the day-specific input layers
-        self.day_layer_activation = nn.Softsign() # basically a shallower tanh 
+        # # Parameters for the day-specific input layers
+        # self.day_layer_activation = nn.Softsign() # basically a shallower tanh 
 
-        # Set weights for day layers to be identity matrices so the model can learn its own day-specific transformations
-        self.day_weights = nn.ParameterList(
-            [nn.Parameter(torch.eye(self.neural_dim)) for _ in range(self.n_days)]
-        )
-        self.day_biases = nn.ParameterList(
-            [nn.Parameter(torch.zeros(1, self.neural_dim)) for _ in range(self.n_days)]
-        )
+        # # Set weights for day layers to be identity matrices so the model can learn its own day-specific transformations
+        # self.day_weights = nn.ParameterList(
+        #     [nn.Parameter(torch.eye(self.neural_dim)) for _ in range(self.n_days)]
+        # )
+        # self.day_biases = nn.ParameterList(
+        #     [nn.Parameter(torch.zeros(1, self.neural_dim)) for _ in range(self.n_days)]
+        # )
 
-        self.day_layer_dropout = nn.Dropout(input_dropout)
+        # self.day_layer_dropout = nn.Dropout(input_dropout)
 
         self.tower = nn.Sequential(
             nn.Conv2d(8 * patch_size, conv_hidden_dim, 3, 1, 1),
             nn.LeakyReLU(0.1),
 
-            *[ResCnnBlock(conv_hidden_dim, rnn_dropout) for _ in range(cnn_layers)],
+            *[ResCnnBlock(conv_hidden_dim, 0.0) for _ in range(cnn_layers)],
             nn.Flatten()
         )
 
@@ -202,6 +245,8 @@ class CnnGruDecoder(nn.Module):
             bidirectional = False,
         )
 
+        # Custom initialization for GRU weights (Orthogonal is usually good for RNNs)
+        # Following baseline implementation here
         for name, param in self.gru.named_parameters():
             if "weight_hh" in name:
                 nn.init.orthogonal_(param)
@@ -212,23 +257,24 @@ class CnnGruDecoder(nn.Module):
         self.out = nn.Linear(self.n_units, self.n_classes)
         nn.init.xavier_uniform_(self.out.weight)
 
+        # Learned initial hidden state for gru
         self.h0 = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(1, 1, self.n_units)))
 
     def forward(self, x: torch.Tensor, day_idx, states=None, return_state = False):
         # input x shape: [B, T, F]
         B, T, _ = x.shape
 
-        # Set up day specific transformation
-        day_weights = torch.stack([self.day_weights[i] for i in day_idx], dim=0)
-        day_biases = torch.cat([self.day_biases[i] for i in day_idx], dim=0).unsqueeze(1)
+        # # Set up day specific transformation
+        # day_weights = torch.stack([self.day_weights[i] for i in day_idx], dim=0)
+        # day_biases = torch.cat([self.day_biases[i] for i in day_idx], dim=0).unsqueeze(1)
 
-        # Einstien sum on day weights and x tensor
-        # [T, F] x [512, 512] -> [B, T, 512]
-        x = torch.einsum("btd,bdk->btk", x, day_weights) + day_biases
-        x = self.day_layer_activation(x)
+        # # Einstien sum on day weights and x tensor
+        # # [T, F] x [512, 512] -> [B, T, 512]
+        # x = torch.einsum("btd,bdk->btk", x, day_weights) + day_biases
+        # x = self.day_layer_activation(x)
 
-        if self.training and self.input_dropout > 0:
-            x = self.day_layer_dropout(x)
+        # if self.training and self.input_dropout > 0:
+        #     x = self.day_layer_dropout(x)
 
         # [B, T, 8, 8, 8] (8 of 8x8 brain electrode arrays)
         x = x.view(B, T, 8, 8, 8)
@@ -267,19 +313,25 @@ class CnnGruDecoder(nn.Module):
 
 
 class CnnTransformerDecoder(nn.Module):
+    """
+    Hybrid CNN-Transformer Decoder.
+    
+    1. CNN extracts local spatial-temporal features.
+    2. Transformer Encoder models long-range dependencies across the sequence.
+    """
     def __init__(self,
                  neural_dim,
                  n_units,
                  n_days,
                  n_classes,
                  n_heads = 8,
-                 dim_feedforward = 1024,
+                 dim_feedforward = 512,
                  cnn_layers = 2,
                  transformer_dropout = 0.1,
                  conv_hidden_dim = 64,
                  input_dropout = 0.1,
                  n_layers = 4, 
-                 patch_size = 10,
+                 patch_size = 14,
                  patch_stride = 4):
         
         super().__init__()
@@ -308,6 +360,7 @@ class CnnTransformerDecoder(nn.Module):
 
         self.day_layer_dropout = nn.Dropout(input_dropout)
 
+        # CNN Tower
         self.tower = nn.Sequential(
             nn.Conv2d(8 * patch_size, conv_hidden_dim, 3, 1, 1),
             nn.LeakyReLU(0.1),
@@ -318,8 +371,8 @@ class CnnTransformerDecoder(nn.Module):
 
         self.projection = nn.Linear(64 * conv_hidden_dim, n_units)
 
+        # Transformer components
         self.pos_encoder = PositionalEncoder(n_units, dropout=transformer_dropout)
-
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=n_units,
             nhead=n_heads,
@@ -328,13 +381,13 @@ class CnnTransformerDecoder(nn.Module):
             activation="gelu",
             batch_first=False # PyTorch Transformer default is often [Seq, Batch, Dim]
         )
-
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
 
+        self.final_norm = nn.LayerNorm(n_units)
         self.out = nn.Linear(self.n_units, self.n_classes)
         nn.init.xavier_uniform_(self.out.weight)
 
-    def forward(self, x: torch.Tensor, day_idx, src_key_padding_mask=None):
+    def forward(self, x: torch.Tensor, day_idx, src_key_padding_mask=None, states = None, return_state = False):
         # input x shape: [B, T, F]
         B, T, _ = x.shape
 
@@ -376,23 +429,26 @@ class CnnTransformerDecoder(nn.Module):
         # [T, B, dim]
         feats = feats.permute(1, 0, 2)
 
+        # Add positional encodings
         feats = self.pos_encoder(feats)
 
+        # Pass through Transformer Encoder
         encoded = self.transformer_encoder(feats, src_key_padding_mask=src_key_padding_mask)
+        encoded = self.final_norm(encoded)
 
         encoded = encoded.permute(1, 0, 2)
 
         logits = self.out(encoded)
 
         return logits
-
-
+    
 import os
     
 if __name__ == "__main__":
     from rnn_trainer import BrainToTextDecoder_Trainer
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
+    # config_path = os.path.join(script_dir, 'cnn_gru_args.yaml')
     config_path = os.path.join(script_dir, 'rnn_args.yaml')
     
     args = OmegaConf.load(config_path)

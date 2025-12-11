@@ -98,11 +98,9 @@ def runSingleDecodingStep(x, input_layer, model, model_args, device):
         )
 
         with torch.no_grad():
-            logits, _ = model(
+            logits = model(
                 x = x,
-                day_idx = torch.tensor([input_layer], device=device),
-                states = None, # no initial states
-                return_state = True,
+                day_idx = torch.tensor([input_layer], device=device)
             )
 
     # convert logits from bfloat16 to float32

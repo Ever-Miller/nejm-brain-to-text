@@ -131,17 +131,45 @@ class BrainToTextDecoder_Trainer:
         #     patch_stride = self.args['model']['patch_stride'],
         # )
 
-        self.model = CnnTransformerDecoder(
+        self.model = CnnGruDecoder(
             neural_dim = self.args['model']['n_input_features'],
             n_units = self.args['model']['n_units'],
             n_days = len(self.args['dataset']['sessions']),
             n_classes  = self.args['dataset']['n_classes'],
-            transformer_dropout = self.args['model']['rnn_dropout'],
+            rnn_dropout = self.args['model']['rnn_dropout'], 
             input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
             n_layers = self.args['model']['n_layers'],
             patch_size = self.args['model']['patch_size'],
             patch_stride = self.args['model']['patch_stride'],
         )
+
+        # self.model = CnnTransformerDecoder  (
+        #     neural_dim = self.args['model']['n_input_features'],
+        #     n_units = self.args['model']['n_units'],
+        #     n_days = len(self.args['dataset']['sessions']),
+        #     n_classes  = self.args['dataset']['n_classes'],
+        #     transformer_dropout = self.args['model']['transformer_dropout'],
+        #     input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
+        #     conv_hidden_dim = self.args['model']['conv_hidden_dim'],
+        #     cnn_layers = self.args['model']['cnn_layers'],
+        #     n_layers = self.args['model']['n_layers'],
+        #     patch_size = self.args['model']['patch_size'],
+        #     patch_stride = self.args['model']['patch_stride'],
+        # )
+
+        # self.model = CnnGruDecoder  (
+        #     neural_dim = self.args['model']['n_input_features'],
+        #     n_units = self.args['model']['n_units'],
+        #     n_days = len(self.args['dataset']['sessions']),
+        #     n_classes  = self.args['dataset']['n_classes'],
+        #     rnn_dropout = self.args['model']['rnn_dropout'],
+        #     conv_hidden_dim = self.args['model']['conv_hidden_dim'],
+        #     cnn_layers = self.args['model']['cnn_layers'],
+        #     input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
+        #     n_layers = self.args['model']['n_layers'],
+        #     patch_size = self.args['model']['patch_size'],
+        #     patch_stride = self.args['model']['patch_stride'],
+        # )
 
 
         # Call torch.compile to speed up training
@@ -520,6 +548,8 @@ class BrainToTextDecoder_Trainer:
 
         accumulation_steps = self.args.get('accumulation_steps', 1)
 
+        n_supervision = self.args.get('n_supervision', 3)
+
         early_stopping_val_steps = self.args['early_stopping_val_steps']
 
         train_start_time = time.time()
@@ -568,15 +598,16 @@ class BrainToTextDecoder_Trainer:
                     
                 loss = torch.mean(loss) # take mean loss over batches
 
-            loss = loss / accumulation_steps
-            loss.backward()
+                loss = loss / accumulation_steps
+                loss.backward()
+                current_loss_val = loss.detach().item()
 
             if ((i + 1) % accumulation_steps == 0) or (i + 1 == len(self.train_loader)):
                 # Clip gradient
                 if self.args['grad_norm_clip_value'] > 0: 
                     grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
                                                     max_norm = self.args['grad_norm_clip_value'],
-                                                    error_if_nonfinite = True,
+                                                    error_if_nonfinite = False,
                                                     foreach = True
                                                     )
 
@@ -591,7 +622,7 @@ class BrainToTextDecoder_Trainer:
             # Incrementally log training progress
             if i % self.args['batches_per_train_log'] == 0:
                 self.logger.info(f'Train batch {i}: ' +
-                        f'loss: {(loss.detach().item() * accumulation_steps):.2f} ' +
+                        f'loss: {(current_loss_val * accumulation_steps):.2f} ' +
                         f'grad norm: {grad_norm:.2f} '
                         f'time: {train_step_duration:.3f}')
 
